@@ -1,5 +1,7 @@
 #include "controllers/SensorController.h"
 
+#include <string.h>
+
 #include "Config.h"
 
 using namespace ifx::tlx493d;
@@ -65,15 +67,27 @@ bool SensorController::readRaw(float out[9]) {
   }
 
   // MAG1 = bottom, MAG2 = top left, MAG3 = top right.
-  out[0] = mag1x;
-  out[1] = mag1y;
-  out[2] = mag1z;
-  out[3] = mag2x;
-  out[4] = mag2y;
-  out[5] = mag2z;
-  out[6] = mag3x;
-  out[7] = mag3y;
-  out[8] = mag3z;
+  const float raw[9] = {
+    static_cast<float>(mag1x), static_cast<float>(mag1y), static_cast<float>(mag1z),
+    static_cast<float>(mag2x), static_cast<float>(mag2y), static_cast<float>(mag2z),
+    static_cast<float>(mag3x), static_cast<float>(mag3y), static_cast<float>(mag3z),
+  };
+
+  // Running average (exponential) of the raw per-channel readings — every
+  // caller (real-time motion, baseline calibration, and the HID feature
+  // report calibrate.py reads) was previously seeing an unsmoothed single
+  // I2C sample, which fed noise straight into the dead-zone comparison and
+  // into calibration data collection.
+  if (!smoothedInit_) {
+    memcpy(smoothed_, raw, sizeof(smoothed_));
+    smoothedInit_ = true;
+  } else {
+    const float alpha = 0.3;
+    for (int i = 0; i < 9; i++) {
+      smoothed_[i] += alpha * (raw[i] - smoothed_[i]);
+    }
+  }
+  memcpy(out, smoothed_, sizeof(smoothed_));
   return true;
 }
 
