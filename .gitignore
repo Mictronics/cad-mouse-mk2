@@ -3,3 +3,4 @@
 .DS_Store
 cal_*.log
 mouse_monitor.log
+__pycache__/
