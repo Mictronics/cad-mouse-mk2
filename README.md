@@ -26,6 +26,14 @@ This script:
 
 After running it, plug in the mouse and wait a couple of seconds for the LED to turn green — the device is running its zero-calibration on startup.
 
+### Button gestures
+
+| Gesture | Effect |
+|---------|--------|
+| Hold both buttons 3s | Enter calibration mode |
+| Hold both buttons 10s | Reboot into the UF2 bootloader (drag-and-drop reflash, no case-opening needed) |
+| Hold the right button only, 3s | Cycle the idle LED color (persists across power cycles) |
+
 ### Button mapping
 
 Button behaviour is configured in `~/.config/spacemouse/button-map.conf`. The file shipped with the repo maps:
@@ -95,6 +103,47 @@ You should recalibrate whenever you rebuild the mouse, swap a sensor, or notice 
 **Matrix fitting** — `calibrate.py` uses least-squares regression (`numpy.linalg.lstsq`) across all six labeled movement logs simultaneously to find the 6×9 matrix that best predicts the intended single-axis output from the 9 sensor deltas. Fitting all axes together lets the solver distinguish shared sensor patterns that belong to one DoF from those that belong to another.
 
 **Sending the result** — after fitting, `calibrate.py` writes the matrix to the device via HID output report ID 5 (`write()` on the hidraw device). The firmware applies the matrix immediately and saves it to LittleFS flash. On every subsequent boot, the saved matrix is loaded automatically. If no saved matrix exists (e.g. after first flash), the firmware falls back to the matrix compiled into `Calibration.h`.
+
+## Motion model
+
+Live motion output no longer comes straight from the 6×9 matrix above — that matrix is still fit and kept as a compiled-in fallback, but the firmware's active pipeline (`MotionController::compute`) instead computes a **3D point and orientation** from the sensor geometry directly. Each sensor's baseline-subtracted reading becomes a vector, offset by that sensor's real mounting position on the PCB (`pcbs/src/sensor_board.brd`); averaging the three implied points gives an (x, y, z) position, and the plane through them gives tilt (Rx, Ry) and twist (Rz). This is more physically direct than the linear matrix, but the three sensors' short baseline amplifies any Z-asymmetry into a large apparent tilt angle — so a second, ridge-regularized 6×6 matrix (`GEO_M`, in `firmware/include/GeoCalibration.h`) decouples the resulting cross-axis crosstalk between those six geometric outputs, plus a per-axis gain (`GEO_AXIS_GAIN` in `Config.h`) so translation axes can compete fairly against the rotation crosstalk they induce.
+
+### `interactive_calibrate.py`
+
+A standalone, self-paced host tool (run directly in your own terminal, not through an AI assistant) for tuning and verifying the geometric model live:
+
+```bash
+python3 interactive_calibrate.py
+```
+
+- **1–6**: capture 5s of motion for one axis (same six movements as [Calibration](#calibration) above)
+- **g**: fit `GEO_M` from the captured logs and save it to `geo_matrix.json`
+- **c**: run `calibrate.py` (the linear-matrix fallback described above)
+- **+ / -**: adjust the 3D-point scale factor live
+
+The live view shows raw per-sensor deltas, the fitted 3D point and orientation, and a plain-English "THE MOUSE THINKS: ..." line so you can watch the model's interpretation update in real time as you move the puck — useful both for tuning and for telling a real hardware fault from a calibration problem.
+
+`geo_matrix.json` is committed to the repo as a starting point — it's fit from one physical unit, but the three sensors' mounting geometry is fixed by the PCB design, so the fit mostly captures per-sensor gain/crosstalk that carries over reasonably well across similarly-built units. Re-running the capture + `g` on your own device will fine-tune it.
+
+**Porting to firmware**: unlike `Calibration.h`, `GeoCalibration.h`'s `GEO_M` is not yet auto-written by the host tool — after refitting, copy the 6 printed rows into that file by hand and reflash.
+
+## LED indicator
+
+The ring shows what the mouse currently thinks it's detecting (see `lightpattern.md`):
+
+| Motion | Pattern |
+|---|---|
+| Idle | Solid cyan (cycle color with the button gesture above) |
+| Push down | Solid red, blinking |
+| Pull up | Solid green, blinking |
+| Tilt (front/back/left/right) | Cyan ring, green on the 2 LEDs toward the tilt direction |
+| Slide left | Green 6–12 o'clock, red 1–5 o'clock |
+| Slide right | Green 12–6 o'clock, red 7–11 o'clock |
+| Slide forward | Green 3–9 o'clock (through 12), red on the rest |
+| Slide backward | Green 9–3 o'clock (through 6), red on the rest |
+| Twist (cw/ccw) | Cyan ring, single blue LED circling in the twist direction |
+
+Blink rate (and, for twist, circling speed) scales with how hard the motion is — faster near full deflection, slower near the dead zone.
 
 [![CC BY-NC-SA 4.0][cc-by-nc-sa-shield]][cc-by-nc-sa]
 

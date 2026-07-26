@@ -16,6 +16,15 @@ class HIDController {
   // Clears the flag; caller should save + apply the matrix.
   bool takeCalibrationMatrix(float matrix[6][9]);
 
+  // Returns true if a host-driven LED color arrived via output report ID 6
+  // (diagnostic use: lets a host script flash the LED ring to cue the
+  // tester without needing physical button gestures). Clears the flag.
+  bool takeLedColor(unsigned long& color);
+
+  // Returns true if a host-driven single-pixel command arrived via output
+  // report ID 7 (index + RGB). Clears the flag.
+  bool takeLedPixel(int& index, unsigned long& color);
+
  private:
   struct __attribute__((packed)) ReportAxes {
     int16_t x, y, z, rx, ry, rz;
@@ -47,4 +56,13 @@ class HIDController {
   // Output report ID 5: pending calibration matrix (54 floats = 216 bytes)
   float pendingMatrix_[6][9] = {};
   bool calibrationMatrixReady_ = false;
+
+  // Output report ID 6: pending diagnostic LED color (3 bytes RGB)
+  unsigned long pendingLedColor_ = 0;
+  bool ledColorReady_ = false;
+
+  // Output report ID 7: pending single-pixel command (index + RGB)
+  int pendingLedPixelIndex_ = 0;
+  unsigned long pendingLedPixelColor_ = 0;
+  bool ledPixelReady_ = false;
 };
