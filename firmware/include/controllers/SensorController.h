@@ -32,4 +32,8 @@ class SensorController {
   unsigned long lastCalibrationSampleMs_ = 0;
   float calibrationSum_[9] = {};
   float baseline_[9] = {};
+
+  // Running average of raw sensor readings (see readRaw()).
+  float smoothed_[9] = {};
+  bool smoothedInit_ = false;
 };
