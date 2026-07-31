@@ -1,5 +1,7 @@
 #include "controllers/SensorController.h"
 
+#include <string.h>
+
 #include "Config.h"
 
 using namespace ifx::tlx493d;
@@ -51,31 +53,49 @@ void SensorController::begin() {
   delay(10);
 }
 
-void SensorController::readRaw(float out[9]) {
+bool SensorController::readRaw(float out[9]) {
   double mag1x = 0, mag1y = 0, mag1z = 0, temp1 = 0;
   double mag2x = 0, mag2y = 0, mag2z = 0, temp2 = 0;
   double mag3x = 0, mag3y = 0, mag3z = 0, temp3 = 0;
 
-  mag1Sensor_.getMagneticFieldAndTemperature(&mag1x, &mag1y, &mag1z, &temp1);
-  mag2Sensor_.getMagneticFieldAndTemperature(&mag2x, &mag2y, &mag2z, &temp2);
-  mag3Sensor_.getMagneticFieldAndTemperature(&mag3x, &mag3y, &mag3z, &temp3);
+  const bool ok1 = mag1Sensor_.getMagneticFieldAndTemperature(&mag1x, &mag1y, &mag1z, &temp1);
+  const bool ok2 = mag2Sensor_.getMagneticFieldAndTemperature(&mag2x, &mag2y, &mag2z, &temp2);
+  const bool ok3 = mag3Sensor_.getMagneticFieldAndTemperature(&mag3x, &mag3y, &mag3z, &temp3);
+
+  if (!ok1 || !ok2 || !ok3) {
+    return false;
+  }
 
   // MAG1 = bottom, MAG2 = top left, MAG3 = top right.
-  out[0] = mag1x;
-  out[1] = mag1y;
-  out[2] = mag1z;
-  out[3] = mag2x;
-  out[4] = mag2y;
-  out[5] = mag2z;
-  out[6] = mag3x;
-  out[7] = mag3y;
-  out[8] = mag3z;
+  const float raw[9] = {
+    static_cast<float>(mag1x), static_cast<float>(mag1y), static_cast<float>(mag1z),
+    static_cast<float>(mag2x), static_cast<float>(mag2y), static_cast<float>(mag2z),
+    static_cast<float>(mag3x), static_cast<float>(mag3y), static_cast<float>(mag3z),
+  };
+
+  // Running average (exponential) of the raw per-channel readings — every
+  // caller (real-time motion, baseline calibration, and the HID feature
+  // report calibrate.py reads) was previously seeing an unsmoothed single
+  // I2C sample, which fed noise straight into the dead-zone comparison and
+  // into calibration data collection.
+  if (!smoothedInit_) {
+    memcpy(smoothed_, raw, sizeof(smoothed_));
+    smoothedInit_ = true;
+  } else {
+    const float alpha = 0.3;
+    for (int i = 0; i < 9; i++) {
+      smoothed_[i] += alpha * (raw[i] - smoothed_[i]);
+    }
+  }
+  memcpy(out, smoothed_, sizeof(smoothed_));
+  return true;
 }
 
 void SensorController::beginCalibration() {
   calibrationActive_ = true;
   calibrationDone_ = false;
   calibrationSamples_ = 0;
+  calibrationSampleStarted_ = false;
   lastCalibrationSampleMs_ = 0;
   for (int i = 0; i < 9; i++) {
     calibrationSum_[i] = 0.0;
@@ -88,14 +108,16 @@ void SensorController::updateCalibration() {
   }
 
   const unsigned long now = millis();
-  if (lastCalibrationSampleMs_ != 0 &&
-      (now - lastCalibrationSampleMs_) < 10) {
+  if (calibrationSampleStarted_ && (now - lastCalibrationSampleMs_) < 10) {
     return;
   }
+  calibrationSampleStarted_ = true;
   lastCalibrationSampleMs_ = now;
 
   float raw[9] = {};
-  readRaw(raw);
+  if (!readRaw(raw)) {
+    return;
+  }
 
   for (int i = 0; i < 9; i++) {
     calibrationSum_[i] += raw[i];

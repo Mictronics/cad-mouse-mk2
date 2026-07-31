@@ -9,7 +9,7 @@ class SensorController {
   SensorController();
 
   void begin();
-  void readRaw(float out[9]);
+  bool readRaw(float out[9]);
 
   void beginCalibration();
   void updateCalibration();
@@ -28,7 +28,12 @@ class SensorController {
   bool calibrationActive_ = false;
   bool calibrationDone_ = false;
   int calibrationSamples_ = 0;
+  bool calibrationSampleStarted_ = false;
   unsigned long lastCalibrationSampleMs_ = 0;
   float calibrationSum_[9] = {};
   float baseline_[9] = {};
+
+  // Running average of raw sensor readings (see readRaw()).
+  float smoothed_[9] = {};
+  bool smoothedInit_ = false;
 };
